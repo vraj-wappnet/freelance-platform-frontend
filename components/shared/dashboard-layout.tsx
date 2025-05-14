@@ -77,7 +77,6 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
       : []),
     { name: "Contracts", icon: FileText, href: "/contracts" },
     { name: "Milestones", icon: CalendarCheck, href: "/milestones" },
-    { name: "Reviews", icon: Award, href: "/reviews" },
   ];
 
   return (
