@@ -28,13 +28,16 @@ import { Plus, Edit, Trash2, Eye } from "lucide-react";
 // Contract interface
 export interface Contract {
   id: string;
-  amount: number;
+  amount: string;
   description: string;
   startDate: string;
   endDate: string;
+  status: string;
+  clientAccepted: boolean;
+  freelancerAccepted: boolean;
   project_id: string;
   freelancer_id: string;
-  client_id?: string;
+  client_id: string;
   createdAt: string;
   updatedAt: string;
   project: {
@@ -43,7 +46,15 @@ export interface Contract {
   };
   freelancer: {
     id: string;
-    name: string;
+    user_id: string;
+    firstName: string;
+    lastName: string;
+  };
+  client: {
+    id: string;
+    user_id: string;
+    firstName: string;
+    lastName: string;
   };
 }
 
@@ -57,7 +68,9 @@ export interface Project {
 // Freelancer interface (minimal for dropdown)
 export interface Freelancer {
   id: string;
-  name: string;
+  user_id: string;
+  firstName: string;
+  lastName: string;
 }
 
 interface MessageResponse {
@@ -95,17 +108,16 @@ export default function ContractsPage() {
     endDate: "",
     project_id: "",
     freelancer_id: "",
+    freelancerAccepted: "No",
   });
   const [formError, setFormError] = useState<string | null>(null);
 
-  // UUID validation regex
   const isValidUuid = (id: string) => {
     const uuidRegex =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     return uuidRegex.test(id);
   };
 
-  // Redirect to login if not authenticated
   useEffect(() => {
     if (!user) {
       router.push("/login");
@@ -114,7 +126,6 @@ export default function ContractsPage() {
     }
   }, [user, router]);
 
-  // Fetch contracts, projects, and freelancers based on user role
   useEffect(() => {
     const fetchContracts = async () => {
       if (!user?.id || !user?.role) {
@@ -205,7 +216,6 @@ export default function ContractsPage() {
     }
   }, [user]);
 
-  // Open create modal
   const handleOpenCreateModal = () => {
     setFormData({
       amount: "",
@@ -214,56 +224,99 @@ export default function ContractsPage() {
       endDate: "",
       project_id: "",
       freelancer_id: "",
+      freelancerAccepted: "No",
     });
     setFormError(null);
     setIsCreateModalOpen(true);
   };
 
-  // Open edit modal
   const handleEdit = (contract: Contract) => {
     setSelectedContract(contract);
     setFormData({
-      amount: contract.amount.toString() || "",
+      amount: contract.amount || "",
       description: contract.description || "",
       startDate: contract.startDate || "",
       endDate: contract.endDate || "",
       project_id: contract.project_id || "",
       freelancer_id: contract.freelancer_id || "",
+      freelancerAccepted: contract.freelancerAccepted ? "Yes" : "No",
     });
     setFormError(null);
     setIsEditModalOpen(true);
   };
 
-  // Open view modal
   const handleView = (contract: Contract) => {
     setSelectedContract(contract);
     setIsViewModalOpen(true);
   };
 
-  // Handle form input changes
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  // Handle project selection
   const handleProjectChange = (value: string) => {
     setFormData({ ...formData, project_id: value });
   };
 
-  // Handle freelancer selection
   const handleFreelancerChange = (value: string) => {
     setFormData({ ...formData, freelancer_id: value });
   };
 
-  // Validate form
+  const handleFreelancerAcceptedChange = (value: string) => {
+    setFormData({ ...formData, freelancerAccepted: value });
+  };
+
+  const handleAcceptChange = async (contract: Contract, value: string) => {
+    if (!contract.id || !user) return;
+    if (
+      user.role === "freelancer" &&
+      (!contract.freelancer?.user_id ||
+        contract.freelancer.user_id !== user.user_id)
+    ) {
+      setError("You are not authorized to update this contract");
+      return;
+    }
+
+    try {
+      const payload = {
+        freelancerAccepted: value === "Yes",
+      };
+      console.log("Update accept status payload:", payload);
+      const response = await ApiService.patch<Contract, typeof payload>(
+        `/contracts/${contract.id}`,
+        payload
+      );
+      console.log("Update accept status response:", response.data);
+      setContracts(
+        contracts.map((c) => (c.id === contract.id ? response.data : c))
+      );
+      setError(null);
+    } catch (err: any) {
+      console.error(
+        "Update accept status error:",
+        err,
+        "Full response:",
+        err.response
+      );
+      const message =
+        err.response?.data?.message || err.response?.data?.error || err.message;
+      setError(
+        Array.isArray(message)
+          ? message.join(", ")
+          : message || "Failed to update accept status"
+      );
+    }
+  };
+
   const validateForm = (isUpdate: boolean = false) => {
-    if (!formData.amount || isNaN(parseFloat(formData.amount)))
+    if (!isUpdate && (!formData.amount || isNaN(parseFloat(formData.amount))))
       return "Valid amount is required";
-    if (!formData.description.trim()) return "Description is required";
-    if (!formData.startDate) return "Start date is required";
-    if (!formData.endDate) return "End date is required";
+    if (!isUpdate && !formData.description.trim())
+      return "Description is required";
+    if (!isUpdate && !formData.startDate) return "Start date is required";
+    if (!isUpdate && !formData.endDate) return "End date is required";
     if (!isUpdate && !formData.project_id)
       return "Project selection is required";
     if (!isUpdate && !formData.freelancer_id)
@@ -271,22 +324,47 @@ export default function ContractsPage() {
     return null;
   };
 
-  // Update contract
+  
+
   const handleUpdate = async () => {
     if (!selectedContract?.id) return;
     const validationError = validateForm(true);
-    if (validationError) {
+    if (validationError && user?.role !== "freelancer") {
       setFormError(validationError);
       return;
     }
 
+    if (
+      user?.role === "freelancer" &&
+      (!selectedContract.freelancer?.user_id ||
+        selectedContract.freelancer.user_id !== user.user_id)
+    ) {
+      setFormError("You are not authorized to update this contract");
+      return;
+    }
+
     try {
-      const payload = {
-        amount: parseFloat(formData.amount),
-        description: formData.description,
-        startDate: formData.startDate,
-        endDate: formData.endDate,
-      };
+      let payload: {
+        amount?: number;
+        description?: string;
+        startDate?: string;
+        endDate?: string;
+        freelancerAccepted?: boolean;
+      } = {};
+
+      if (user?.role === "freelancer") {
+        payload = {
+          freelancerAccepted: formData.freelancerAccepted === "Yes",
+        };
+      } else {
+        payload = {
+          amount: parseFloat(formData.amount),
+          description: formData.description,
+          startDate: formData.startDate,
+          endDate: formData.endDate,
+        };
+      }
+
       console.log("Update contract payload:", payload);
       const response = await ApiService.patch<Contract, typeof payload>(
         `/contracts/${selectedContract.id}`,
@@ -303,10 +381,11 @@ export default function ContractsPage() {
       console.error(
         "Update contract error:",
         err,
-        "Response:",
-        err.response?.data
+        "Full response:",
+        err.response
       );
-      const message = err.response?.data?.message;
+      const message =
+        err.response?.data?.message || err.response?.data?.error || err.message;
       setFormError(
         Array.isArray(message)
           ? message.join(", ")
@@ -315,7 +394,6 @@ export default function ContractsPage() {
     }
   };
 
-  // Delete contract
   const handleDelete = async (contract: Contract) => {
     if (!contract.id) return;
     if (
@@ -357,6 +435,7 @@ export default function ContractsPage() {
       <div className="container mx-auto p-4">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold tracking-tight">Contracts</h1>
+       
         </div>
 
         {isLoading && <p>Loading contracts...</p>}
@@ -383,12 +462,11 @@ export default function ContractsPage() {
                   <th className="border border-gray-200 px-4 py-2 text-left text-sm font-semibold">
                     Amount
                   </th>
-                  <th className="border border-gray-200 px-4 py-2 text-left text-sm font-semibold">
-                    Start Date
-                  </th>
-                  <th className="border border-gray-200 px-4 py-2 text-left text-sm font-semibold">
-                    End Date
-                  </th>
+                  {isFreelancer && (
+                    <th className="border border-gray-200 px-4 py-2 text-left text-sm font-semibold">
+                      Freelancer Accepted
+                    </th>
+                  )}
                   <th className="border border-gray-200 px-4 py-2 text-left text-sm font-semibold">
                     Actions
                   </th>
@@ -401,21 +479,37 @@ export default function ContractsPage() {
                       {contract.project?.title || "Unknown Project"}
                     </td>
                     <td className="border border-gray-200 px-4 py-2 text-sm">
-                      {contract.freelancer?.name || "Unknown"}
+                      {contract.freelancer
+                        ? `${contract.freelancer.firstName} ${contract.freelancer.lastName}`
+                        : "Unknown"}
                     </td>
                     <td className="border border-gray-200 px-4 py-2 text-sm">
-                      ${contract.amount || 0}
+                      ${contract.amount || "0.00"}
                     </td>
-                    <td className="border border-gray-200 px-4 py-2 text-sm">
-                      {contract.startDate
-                        ? new Date(contract.startDate).toLocaleDateString()
-                        : "N/A"}
-                    </td>
-                    <td className="border border-gray-200 px-4 py-2 text-sm">
-                      {contract.endDate
-                        ? new Date(contract.endDate).toLocaleDateString()
-                        : "N/A"}
-                    </td>
+                    {isFreelancer && (
+                      <td className="border border-gray-200 px-4 py-2 text-sm">
+                        {contract.freelancer?.user_id === user.user_id ? (
+                          <Select
+                            value={contract.freelancerAccepted ? "Yes" : "No"}
+                            onValueChange={(value) =>
+                              handleAcceptChange(contract, value)
+                            }
+                          >
+                            <SelectTrigger className="w-[100px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Yes">Yes</SelectItem>
+                              <SelectItem value="No">No</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <span>
+                            {contract.freelancerAccepted ? "Yes" : "No"}
+                          </span>
+                        )}
+                      </td>
+                    )}
                     <td className="border border-gray-200 px-4 py-2 text-sm">
                       <div className="flex gap-2">
                         <Button
@@ -458,12 +552,9 @@ export default function ContractsPage() {
           </div>
         )}
 
-        {/* Edit Contract Modal */}
-        <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
+        <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
           <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Edit Contract</DialogTitle>
-            </DialogHeader>
+            
             {formError && <p className="text-red-500">{formError}</p>}
             <div className="space-y-4">
               <div>
@@ -472,8 +563,10 @@ export default function ContractsPage() {
                   id="amount"
                   name="amount"
                   type="number"
+                  step="0.01"
                   value={formData.amount}
                   onChange={handleInputChange}
+                  placeholder="e.g., 1000.00"
                 />
               </div>
               <div>
@@ -483,6 +576,7 @@ export default function ContractsPage() {
                   name="description"
                   value={formData.description}
                   onChange={handleInputChange}
+                  placeholder="e.g., Development of a responsive website..."
                 />
               </div>
               <div>
@@ -507,6 +601,105 @@ export default function ContractsPage() {
               </div>
               <div>
                 <Label htmlFor="project_id">Project</Label>
+                <Select
+                  value={formData.project_id}
+                  onValueChange={handleProjectChange}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a project" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {projects.map((project) => (
+                      <SelectItem key={project.id} value={project.id}>
+                        {project.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="freelancer_id">Freelancer</Label>
+                <Select
+                  value={formData.freelancer_id}
+                  onValueChange={handleFreelancerChange}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a freelancer" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {freelancers.map((freelancer) => (
+                      <SelectItem key={freelancer.id} value={freelancer.id}>
+                        {freelancer.firstName} {freelancer.lastName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setIsCreateModalOpen(false)}
+              >
+                Cancel
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit Contract</DialogTitle>
+            </DialogHeader>
+            {formError && <p className="text-red-500">{formError}</p>}
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="amount">Amount</Label>
+                <Input
+                  id="amount"
+                  name="amount"
+                  type="number"
+                  step="0.01"
+                  value={formData.amount}
+                  onChange={handleInputChange}
+                  disabled={isFreelancer}
+                />
+              </div>
+              <div>
+                <Label htmlFor="description">Description</Label>
+                <Input
+                  id="description"
+                  name="description"
+                  value={formData.description}
+                  onChange={handleInputChange}
+                  disabled={isFreelancer}
+                />
+              </div>
+              <div>
+                <Label htmlFor="startDate">Start Date</Label>
+                <Input
+                  id="startDate"
+                  name="startDate"
+                  type="date"
+                  value={formData.startDate}
+                  onChange={handleInputChange}
+                  disabled={isFreelancer}
+                />
+              </div>
+              <div>
+                <Label htmlFor="endDate">End Date</Label>
+                <Input
+                  id="endDate"
+                  name="endDate"
+                  type="date"
+                  value={formData.endDate}
+                  onChange={handleInputChange}
+                  disabled={isFreelancer}
+                />
+              </div>
+              <div>
+                <Label htmlFor="project_id">Project</Label>
                 <Input
                   id="project_id"
                   value={selectedContract?.project?.title || "Unknown Project"}
@@ -518,11 +711,14 @@ export default function ContractsPage() {
                 <Input
                   id="freelancer_id"
                   value={
-                    selectedContract?.freelancer?.name || "Unknown Freelancer"
+                    selectedContract?.freelancer
+                      ? `${selectedContract.freelancer.firstName} ${selectedContract.freelancer.lastName}`
+                      : "Unknown Freelancer"
                   }
                   disabled
                 />
               </div>
+            
             </div>
             <DialogFooter>
               <Button
@@ -536,61 +732,143 @@ export default function ContractsPage() {
           </DialogContent>
         </Dialog>
 
-        {/* View Contract Modal */}
         <Dialog open={isViewModalOpen} onOpenChange={setIsViewModalOpen}>
-          <DialogContent>
+          <DialogContent className="w-full max-w-md sm:max-w-lg md:max-w-2xl p-4 sm:p-6">
             <DialogHeader>
-              <DialogTitle>Contract Details</DialogTitle>
+              <DialogTitle className="text-lg sm:text-xl font-bold">
+                Contract Details
+              </DialogTitle>
             </DialogHeader>
             {selectedContract && (
-              <div className="space-y-4">
-                <div>
-                  <Label>Project</Label>
-                  <p className="text-sm text-gray-600">
-                    {selectedContract.project?.title || "Unknown Project"}
-                  </p>
-                </div>
-                <div>
-                  <Label>Freelancer</Label>
-                  <p className="text-sm text-gray-600">
-                    {selectedContract.freelancer?.name || "Unknown"}
-                  </p>
-                </div>
-                <div>
-                  <Label>Amount</Label>
-                  <p className="text-sm text-gray-600">
-                    ${selectedContract.amount || 0}
-                  </p>
-                </div>
-                <div>
-                  <Label>Description</Label>
-                  <p className="text-sm text-gray-600">
-                    {selectedContract.description || "No description"}
-                  </p>
-                </div>
-                <div>
-                  <Label>Start Date</Label>
-                  <p className="text-sm text-gray-600">
-                    {selectedContract.startDate
-                      ? new Date(
-                          selectedContract.startDate
-                        ).toLocaleDateString()
-                      : "N/A"}
-                  </p>
-                </div>
-                <div>
-                  <Label>End Date</Label>
-                  <p className="text-sm text-gray-600">
-                    {selectedContract.endDate
-                      ? new Date(selectedContract.endDate).toLocaleDateString()
-                      : "N/A"}
-                  </p>
+              <div className="max-h-[70vh] overflow-y-auto">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+                  <div>
+                    <Label className="font-semibold text-sm sm:text-base">
+                      Contract ID
+                    </Label>
+                    <p className="text-sm sm:text-base text-gray-600 break-all">
+                      {selectedContract.id}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="font-semibold text-sm sm:text-base">
+                      Project
+                    </Label>
+                    <p className="text-sm sm:text-base text-gray-600">
+                      {selectedContract.project?.title || "Unknown Project"}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="font-semibold text-sm sm:text-base">
+                      Freelancer
+                    </Label>
+                    <p className="text-sm sm:text-base text-gray-600">
+                      {selectedContract.freelancer
+                        ? `${selectedContract.freelancer.firstName} ${selectedContract.freelancer.lastName} (${selectedContract.freelancer.user_id})`
+                        : "Unknown"}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="font-semibold text-sm sm:text-base">
+                      Client
+                    </Label>
+                    <p className="text-sm sm:text-base text-gray-600">
+                      {selectedContract.client
+                        ? `${selectedContract.client.firstName} ${selectedContract.client.lastName} (${selectedContract.client.user_id})`
+                        : "Unknown"}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="font-semibold text-sm sm:text-base">
+                      Amount
+                    </Label>
+                    <p className="text-sm sm:text-base text-gray-600">
+                      ${selectedContract.amount || "0.00"}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="font-semibold text-sm sm:text-base">
+                      Description
+                    </Label>
+                    <p className="text-sm sm:text-base text-gray-600">
+                      {selectedContract.description || "No description"}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="font-semibold text-sm sm:text-base">
+                      Status
+                    </Label>
+                    <p className="text-sm sm:text-base text-gray-600">
+                      {selectedContract.status || "N/A"}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="font-semibold text-sm sm:text-base">
+                      Client Accepted
+                    </Label>
+                    <p className="text-sm sm:text-base text-gray-600">
+                      {selectedContract.clientAccepted ? "Yes" : "No"}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="font-semibold text-sm sm:text-base">
+                      Freelancer Accepted
+                    </Label>
+                    <p className="text-sm sm:text-base text-gray-600">
+                      {selectedContract.freelancerAccepted ? "Yes" : "No"}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="font-semibold text-sm sm:text-base">
+                      Start Date
+                    </Label>
+                    <p className="text-sm sm:text-base text-gray-600">
+                      {selectedContract.startDate
+                        ? new Date(
+                            selectedContract.startDate
+                          ).toLocaleDateString()
+                        : "N/A"}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="font-semibold text-sm sm:text-base">
+                      End Date
+                    </Label>
+                    <p className="text-sm sm:text-base text-gray-600">
+                      {selectedContract.endDate
+                        ? new Date(
+                            selectedContract.endDate
+                          ).toLocaleDateString()
+                        : "N/A"}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="font-semibold text-sm sm:text-base">
+                      Created At
+                    </Label>
+                    <p className="text-sm sm:text-base text-gray-600">
+                      {selectedContract.createdAt
+                        ? new Date(selectedContract.createdAt).toLocaleString()
+                        : "N/A"}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="font-semibold text-sm sm:text-base">
+                      Updated At
+                    </Label>
+                    <p className="text-sm sm:text-base text-gray-600">
+                      {selectedContract.updatedAt
+                        ? new Date(selectedContract.updatedAt).toLocaleString()
+                        : "N/A"}
+                    </p>
+                  </div>
                 </div>
               </div>
             )}
-            <DialogFooter>
+            <DialogFooter className="mt-4 sm:mt-6">
               <Button
                 variant="outline"
+                className="w-full sm:w-auto px-4 py-2 text-sm sm:text-base"
                 onClick={() => setIsViewModalOpen(false)}
               >
                 Close

@@ -16,6 +16,7 @@ import {
   FileText,
   Award,
   CalendarCheck,
+  MessageSquare,
 } from "lucide-react";
 import { RootState } from "@/lib/store";
 import { logout } from "@/lib/authSlice";
@@ -34,7 +35,6 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activePath, setActivePath] = useState("");
 
-  // Close sidebar on smaller screens by default
   useEffect(() => {
     setActivePath(window.location.pathname);
 
@@ -46,9 +46,7 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
       }
     };
 
-    // Set initial state
     handleResize();
-
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
@@ -77,11 +75,11 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
       : []),
     { name: "Contracts", icon: FileText, href: "/contracts" },
     { name: "Milestones", icon: CalendarCheck, href: "/milestones" },
+    { name: "Messages", icon: MessageSquare, href: "/messages" },
   ];
 
   return (
     <div className="min-h-screen bg-background flex">
-      {/* Desktop Sidebar */}
       <aside
         className={cn(
           "fixed top-0 left-0 h-full bg-card border-r transition-all duration-300 z-40",
@@ -169,7 +167,6 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
         </div>
       </aside>
 
-      {/* Mobile Menu */}
       {isMobileMenuOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-50 md:hidden transition-opacity duration-300"
@@ -233,14 +230,12 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
         </div>
       )}
 
-      {/* Main Content */}
       <div
         className={cn(
           "flex-1 flex flex-col min-h-screen transition-all duration-300",
           isSidebarOpen ? "md:ml-64" : "md:ml-20"
         )}
       >
-        {/* Mobile Header */}
         <header className="border-b p-4 md:hidden sticky top-0 bg-background z-10 h-16">
           <div className="flex justify-between items-center">
             <Link
@@ -272,7 +267,6 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
           </div>
         </header>
 
-        {/* Desktop Header */}
         <header className="border-b p-4 hidden md:flex sticky top-0 bg-background z-10 h-16">
           <div className="w-full flex justify-between items-center">
             <h1 className="text-lg font-semibold capitalize">
@@ -287,7 +281,6 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
           </div>
         </header>
 
-        {/* Main Content */}
         <main className="flex-1 p-4 md:p-6 bg-muted/10">
           <div className="max-w-7xl mx-auto">{children}</div>
         </main>
