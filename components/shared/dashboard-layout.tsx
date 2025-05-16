@@ -14,7 +14,6 @@ import {
   LayoutDashboard,
   User,
   FileText,
-  Award,
   CalendarCheck,
   MessageSquare,
 } from "lucide-react";
@@ -71,11 +70,12 @@ export function DashboardLayout({ children, userRole }: DashboardLayoutProps) {
       : []),
     { name: "Bids", icon: Gavel, href: "/bids" },
     ...(userRole === "admin" || userRole === "client"
-      ? [{ name: "Projects", icon: User, href: "/projects" }]
+      ? [{ name: "Projects", icon: Briefcase, href: "/projects" }]
       : []),
     { name: "Contracts", icon: FileText, href: "/contracts" },
     { name: "Milestones", icon: CalendarCheck, href: "/milestones" },
     { name: "Messages", icon: MessageSquare, href: "/messages" },
+    { name: "Profile", icon: User, href: "/profile" }, // Updated to /dashboard/profile
   ];
 
   return (

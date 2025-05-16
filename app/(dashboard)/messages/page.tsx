@@ -22,10 +22,33 @@ import {
   Smile,
   Search,
   MoreVertical,
+  Edit,
+  Trash,
+  Check,
+  X,
 } from "lucide-react";
 import type { RootState } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import ApiService from "@/lib/api.service";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+// Utility to generate unique temporary IDs
+const generateTempId = () => `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
 // Define types
 interface Message {
@@ -34,6 +57,7 @@ interface Message {
   sender_id: string;
   recipient_id: string;
   createdAt: string;
+  isRead: boolean;
   sender: { id: string; firstName: string; lastName: string; avatar?: string };
   recipient: {
     id: string;
@@ -72,6 +96,11 @@ export default function MessagesPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [activeConversations, setActiveConversations] = useState<string[]>([]);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editedContent, setEditedContent] = useState("");
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [deleteMessageId, setDeleteMessageId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Fetch available users for new chat
   useEffect(() => {
@@ -86,8 +115,8 @@ export default function MessagesPage() {
         const usersWithStatus = response.data.map((user) => ({
           ...user,
           status:
-            Math.random() > 0.5 ? ("online" as const) : ("offline" as const), // Mock status for demo
-          lastSeen: Math.random() > 0.5 ? "2h ago" : "5m ago", // Mock last seen
+            Math.random() > 0.5 ? ("online" as const) : ("offline" as const),
+          lastSeen: Math.random() > 0.5 ? "2h ago" : "5m ago",
         }));
         setAvailableUsers(
           Array.isArray(usersWithStatus) ? usersWithStatus : []
@@ -138,6 +167,7 @@ export default function MessagesPage() {
     });
 
     socketRef.current.on("connect", () => {
+      console.log(`WebSocket connected for user ${user.id}`);
       socketRef.current?.emit("join", user.id);
       setError(null);
     });
@@ -145,9 +175,11 @@ export default function MessagesPage() {
     socketRef.current.on(
       "conversationStarted",
       ({ initiatorId }: { initiatorId: string }) => {
+        console.log(`Conversation started with initiator ${initiatorId}`);
         const initiator = availableUsers.find((u) => u.id === initiatorId);
         if (initiator) {
           const conversationRoom = [user.id, initiatorId].sort().join("_");
+          console.log(`Joining conversation room ${conversationRoom}`);
           socketRef.current?.emit("joinConversation", {
             room: conversationRoom,
           });
@@ -163,17 +195,67 @@ export default function MessagesPage() {
     );
 
     socketRef.current.on("receiveMessage", (message: Message) => {
+      console.log(`Received message: ${JSON.stringify(message)}`);
       const otherUserId =
         message.sender_id === user.id
           ? message.recipient_id
           : message.sender_id;
-      if (activeConversations.includes(otherUserId)) {
+      if (
+        activeConversations.includes(otherUserId) &&
+        selectedRecipient?.id === otherUserId
+      ) {
         setMessages((prev) => {
-          if (prev.some((m) => m.id === message.id)) return prev;
+          // Replace temporary message if it exists
+          const tempMessageIndex = prev.findIndex(
+            (m) =>
+              m.id.startsWith("temp-") &&
+              m.content === message.content &&
+              m.sender_id === message.sender_id
+          );
+          if (tempMessageIndex !== -1) {
+            console.log(`Replacing temp message at index ${tempMessageIndex}`);
+            const newMessages = [...prev];
+            newMessages[tempMessageIndex] = message;
+            return newMessages;
+          }
+          if (prev.some((m) => m.id === message.id)) {
+            console.log(`Message ${message.id} already exists, skipping`);
+            return prev;
+          }
           return [...prev, message];
         });
       }
     });
+
+    socketRef.current.on("messageUpdated", (updatedMessage: Message) => {
+      console.log(`Message updated: ${JSON.stringify(updatedMessage)}`);
+      if (
+        (updatedMessage.sender_id === user?.id &&
+          updatedMessage.recipient_id === selectedRecipient?.id) ||
+        (updatedMessage.sender_id === selectedRecipient?.id &&
+          updatedMessage.recipient_id === user?.id)
+      ) {
+        setMessages((prev) => {
+          const newMessages = prev.map((msg) =>
+            msg.id === updatedMessage.id ? updatedMessage : msg
+          );
+          console.log(`Updated messages state: ${JSON.stringify(newMessages)}`);
+          return [...newMessages];
+        });
+      }
+    });
+
+    socketRef.current.on(
+      "messageDeleted",
+      ({ messageId }: { messageId: string }) => {
+        console.log(`Message deleted event received: ${messageId}`);
+        setMessages((prev) => {
+          const newMessages = prev.filter((msg) => msg.id !== messageId);
+          console.log(`Messages after deletion: ${JSON.stringify(newMessages)}`);
+          return [...newMessages];
+        });
+      }
+    );
 
     socketRef.current.on("typing", ({ userId }: { userId: string }) => {
       if (userId === selectedRecipient?.id) {
@@ -198,15 +280,18 @@ export default function MessagesPage() {
     );
 
     socketRef.current.on("connect_error", (error) => {
+      console.error(`WebSocket connect error: ${error.message}`);
       setError(`Failed to connect to messaging service: ${error.message}`);
     });
 
     socketRef.current.on("error", (error) => {
+      console.error(`WebSocket error: ${error.message || "Unknown error"}`);
       setError(`Socket error: ${error.message || "Unknown error"}`);
     });
 
     return () => {
       if (socketRef.current) {
+        console.log("Disconnecting WebSocket");
         socketRef.current.disconnect();
         socketRef.current = null;
       }
@@ -219,12 +304,17 @@ export default function MessagesPage() {
     activeConversations,
   ]);
 
-  // Fetch messages when recipient changes
+  // Fetch messages and join conversation room when recipient changes
   useEffect(() => {
-    if (selectedRecipient?.id) {
+    if (selectedRecipient?.id && user?.id) {
       fetchMessages(selectedRecipient.id);
+      const conversationRoom = [user.id, selectedRecipient.id].sort().join("_");
+      console.log(
+        `Joining conversation room on recipient change: ${conversationRoom}`
+      );
+      socketRef.current?.emit("joinConversation", { room: conversationRoom });
     }
-  }, [selectedRecipient?.id]);
+  }, [selectedRecipient?.id, user?.id]);
 
   // Scroll to bottom of messages
   useEffect(() => {
@@ -233,9 +323,9 @@ export default function MessagesPage() {
 
   // Handle typing indicator
   const handleTyping = () => {
-    if (socketRef.current && selectedRecipient?.id) {
+    if (socketRef.current && selectedRecipient?.id && user?.id) {
       socketRef.current.emit("typing", {
-        userId: user?.id,
+        userId: user.id,
         recipientId: selectedRecipient.id,
       });
     }
@@ -252,6 +342,7 @@ export default function MessagesPage() {
     setIsMobileSidebarOpen(false);
 
     const conversationRoom = [user.id, recipientId].sort().join("_");
+    console.log(`Starting conversation, joining room: ${conversationRoom}`);
     socketRef.current?.emit("joinConversation", { room: conversationRoom });
     socketRef.current?.emit("startConversation", {
       userId: user.id,
@@ -272,11 +363,12 @@ export default function MessagesPage() {
     };
 
     const tempMessage = {
-      id: Date.now().toString(),
+      id: generateTempId(),
       content: newMessage,
       sender_id: user.id,
       recipient_id: selectedRecipient.id,
       createdAt: new Date().toISOString(),
+      isRead: false,
       sender: user,
       recipient: selectedRecipient,
     };
@@ -288,6 +380,89 @@ export default function MessagesPage() {
 
     setMessages((prev) => [...prev, tempMessage]);
     setNewMessage("");
+  };
+
+  const handleStartEdit = (message: Message) => {
+    setEditingMessageId(message.id);
+    setEditedContent(message.content);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingMessageId || !user || !socketRef.current) return;
+
+    const updateMessageDto = {
+      content: editedContent.trim(),
+      isRead: false,
+    };
+
+    setIsUpdating(true);
+    try {
+      await ApiService.patch(`/messages/${editingMessageId}`, updateMessageDto);
+      socketRef.current.emit("updateMessage", {
+        userId: user.id,
+        messageId: editingMessageId,
+        updateMessageDto,
+      });
+      setEditingMessageId(null);
+      setEditedContent("");
+    } catch (err: any) {
+      console.error("Update message error:", err);
+      if (selectedRecipient?.id) {
+        fetchMessages(selectedRecipient.id);
+      }
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+    setEditedContent("");
+  };
+
+  const handleDeleteMessage = async () => {
+    if (!deleteMessageId || !user || !socketRef.current || !selectedRecipient)
+      return;
+
+    setIsDeleting(true);
+    try {
+      // Optimistically update the UI by removing the message
+      setMessages((prev) => {
+        const newMessages = prev.filter((msg) => msg.id !== deleteMessageId);
+        console.log(`Optimistically removed message ${deleteMessageId}: ${JSON.stringify(newMessages)}`);
+        return [...newMessages];
+      });
+
+      // Make the API call to delete the message
+      await ApiService.delete(`/messages/${deleteMessageId}`);
+
+      // Emit the delete event
+      socketRef.current.emit("deleteMessage", {
+        userId: user.id,
+        messageId: deleteMessageId,
+      });
+
+      // Fallback: If WebSocket event doesn't update within 2 seconds, refetch
+      setTimeout(() => {
+        setMessages((prev) => {
+          if (prev.some((msg) => msg.id === deleteMessageId)) {
+            console.log(`WebSocket event missed for delete ${deleteMessageId}, refetching messages`);
+            fetchMessages(selectedRecipient.id);
+          }
+          return prev;
+        });
+      }, 2000);
+
+      setDeleteMessageId(null);
+    } catch (err: any) {
+      console.error("Delete message error:", err);
+      // Revert optimistic update on error
+      if (selectedRecipient?.id) {
+        fetchMessages(selectedRecipient.id);
+      }
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const filteredUsers = availableUsers.filter((u) =>
@@ -315,7 +490,34 @@ export default function MessagesPage() {
 
   return (
     <div className="flex h-[calc(100vh-4rem)] bg-background rounded-xl overflow-hidden shadow-sm border">
-      {/* Mobile sidebar toggle */}
+      <AlertDialog
+        open={!!deleteMessageId}
+        onOpenChange={() => setDeleteMessageId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Message</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this message? This action cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteMessage}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : null}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <div className="md:hidden fixed bottom-6 right-6 z-10">
         <Button
           onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
@@ -354,7 +556,6 @@ export default function MessagesPage() {
         </Button>
       </div>
 
-      {/* Sidebar */}
       <div
         className={cn(
           "w-full md:w-96 border-r bg-card flex flex-col absolute md:relative z-20 h-full transition-transform duration-300",
@@ -432,7 +633,7 @@ export default function MessagesPage() {
             </div>
           ) : (
             <div className="divide-y divide-muted/50">
-              {availableUsers.map((u) => (
+              {filteredUsers.map((u) => (
                 <motion.div
                   key={u.id}
                   initial={{ opacity: 0, x: -20 }}
@@ -481,7 +682,6 @@ export default function MessagesPage() {
         </ScrollArea>
       </div>
 
-      {/* Chat Area */}
       <div className="flex-1 flex flex-col relative bg-background">
         {selectedRecipient ? (
           <>
@@ -624,41 +824,113 @@ export default function MessagesPage() {
                                 </AvatarFallback>
                               </Avatar>
                             )}
-                            <div
-                              className={cn(
-                                "p-3 rounded-2xl",
-                                msg.sender_id === user?.id
-                                  ? "bg-primary text-primary-foreground rounded-br-none"
-                                  : "bg-card border rounded-bl-none"
-                              )}
-                            >
-                              <p className="text-sm">{msg.content}</p>
-                              <p
+                            <div className="flex items-end">
+                              <div
                                 className={cn(
-                                  "text-xs mt-1 flex justify-end items-center gap-1",
+                                  "p-3 rounded-2xl",
                                   msg.sender_id === user?.id
-                                    ? "text-primary-foreground/80"
-                                    : "text-muted-foreground"
+                                    ? "bg-primary text-primary-foreground rounded-br-none"
+                                    : "bg-card border rounded-bl-none"
                                 )}
                               >
-                                {formatMessageTime(msg.createdAt)}
-                                {msg.sender_id === user?.id && (
-                                  <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    width="12"
-                                    height="12"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    className="ml-1"
-                                  >
-                                    <polyline points="20 6 9 17 4 12"></polyline>
-                                  </svg>
+                                {editingMessageId === msg.id ? (
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      value={editedContent}
+                                      onChange={(e) =>
+                                        setEditedContent(e.target.value)
+                                      }
+                                      className="text-sm bg-background text-foreground border-muted"
+                                      autoFocus
+                                      onKeyPress={(e) =>
+                                        e.key === "Enter" && handleSaveEdit()
+                                      }
+                                    />
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={handleSaveEdit}
+                                      disabled={
+                                        isUpdating || !editedContent.trim()
+                                      }
+                                    >
+                                      {isUpdating ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <Check className="h-4 w-4" />
+                                      )}
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={handleCancelEdit}
+                                      disabled={isUpdating}
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <p className="text-sm">{msg.content}</p>
+                                    <p
+                                      className={cn(
+                                        "text-xs mt-1 flex justify-end items-center gap-1",
+                                        msg.sender_id === user?.id
+                                          ? "text-primary-foreground/80"
+                                          : "text-muted-foreground"
+                                      )}
+                                    >
+                                      {formatMessageTime(msg.createdAt)}
+                                      {msg.sender_id === user?.id && (
+                                        <svg
+                                          xmlns="http://www.w3.org/2000/svg"
+                                          width="12"
+                                          height="12"
+                                          viewBox="0 0 24 24"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="2"
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          className="ml-1"
+                                        >
+                                          <polyline points="20 6 9 17 4 12"></polyline>
+                                        </svg>
+                                      )}
+                                    </p>
+                                  </>
                                 )}
-                              </p>
+                              </div>
+                              {msg.sender_id === user?.id &&
+                                editingMessageId !== msg.id && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="ml-2 h-6 w-6"
+                                      >
+                                        <MoreVertical className="h-4 w-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent>
+                                      <DropdownMenuItem
+                                        onClick={() => handleStartEdit(msg)}
+                                      >
+                                        <Edit className="h-4 w-4 mr-2" />
+                                        Edit
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        onClick={() =>
+                                          setDeleteMessageId(msg.id)
+                                        }
+                                      >
+                                        <Trash className="h-4 w-4 mr-2" />
+                                        Delete
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                )}
                             </div>
                           </div>
                         </motion.div>
